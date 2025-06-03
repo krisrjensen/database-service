@@ -7,6 +7,7 @@ from flask import Flask, request, jsonify, Blueprint
 import sqlite3
 import os
 import logging
+import time
 from functools import wraps
 from ..database.operations import V3Database
 
@@ -27,29 +28,33 @@ def handle_errors(f):
             logger.error(f"Validation error in {f.__name__}: {str(e)}")
             return jsonify({
                 'status': 'error',
-                'error_type': 'validation_error',
-                'message': str(e)
+                'errorType': 'validation_error',
+                'message': str(e),
+                'timestamp': time.time()
             }), 400
         except sqlite3.Error as e:
             logger.error(f"Database error in {f.__name__}: {str(e)}")
             return jsonify({
                 'status': 'error',
-                'error_type': 'database_error',
-                'message': 'Database operation failed'
+                'errorType': 'database_error',
+                'message': 'Database operation failed',
+                'timestamp': time.time()
             }), 500
         except FileNotFoundError as e:
             logger.error(f"File not found in {f.__name__}: {str(e)}")
             return jsonify({
                 'status': 'error',
-                'error_type': 'file_not_found',
-                'message': 'Requested file not found'
+                'errorType': 'file_not_found',
+                'message': 'Requested file not found',
+                'timestamp': time.time()
             }), 404
         except Exception as e:
             logger.error(f"Unexpected error in {f.__name__}: {str(e)}")
             return jsonify({
                 'status': 'error',
-                'error_type': 'internal_error',
-                'message': 'Internal server error'
+                'errorType': 'internal_error',
+                'message': 'Internal server error',
+                'timestamp': time.time()
             }), 500
     return decorated_function
 
@@ -92,16 +97,16 @@ def get_files():
     files = []
     for file_row in files_data:
         files.append({
-            'file_id': file_row[0],
+            'fileId': file_row[0],
             'filename': file_row[1],
             'path': file_row[2],
             'label': file_row[3],
-            'transient1_index': file_row[4],
-            'transient2_index': file_row[5],
-            'transient3_index': file_row[6],
-            'voltage_level': file_row[7],
-            'current_level': file_row[8],
-            'binary_path': file_row[9]
+            'transient1Index': file_row[4],
+            'transient2Index': file_row[5],
+            'transient3Index': file_row[6],
+            'voltageLevel': file_row[7],
+            'currentLevel': file_row[8],
+            'binaryPath': file_row[9]
         })
     
     return jsonify({
@@ -121,18 +126,18 @@ def get_file(file_id):
         raise FileNotFoundError(f"File with ID {file_id} not found")
     
     file_info = {
-        'file_id': file_data[0],
+        'fileId': file_data[0],
         'filename': file_data[1],
         'path': file_data[2],
         'label': file_data[3],
-        'transient1_index': file_data[4],
-        'transient2_index': file_data[5],
-        'transient3_index': file_data[6],
-        'voltage_level': file_data[7],
-        'current_level': file_data[8],
-        'binary_path': file_data[9],
-        'total_samples': file_data[10] if len(file_data) > 10 else None,
-        'sampling_rate': file_data[11] if len(file_data) > 11 else None
+        'transient1Index': file_data[4],
+        'transient2Index': file_data[5],
+        'transient3Index': file_data[6],
+        'voltageLevel': file_data[7],
+        'currentLevel': file_data[8],
+        'binaryPath': file_data[9],
+        'totalSamples': file_data[10] if len(file_data) > 10 else None,
+        'samplingRate': file_data[11] if len(file_data) > 11 else None
     }
     
     return jsonify({
@@ -154,8 +159,8 @@ def get_file_data(file_id):
         return jsonify({
             'status': 'success',
             'data': {
-                'load_voltage': load_voltage.tolist() if load_voltage is not None else None,
-                'source_current': source_current.tolist() if source_current is not None else None
+                'loadVoltage': load_voltage.tolist() if load_voltage is not None else None,
+                'sourceCurrent': source_current.tolist() if source_current is not None else None
             }
         })
     except Exception as e:
