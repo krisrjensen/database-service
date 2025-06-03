@@ -11,11 +11,20 @@ import numpy as np
 import sys
 from pathlib import Path
 from api.files import files_api
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 DATABASE_PATH = "/Volumes/ArcData/V3_database/arc_detection.db"
 BINARY_DATA_DIR = "/Volumes/ArcData/V3_database/fileset"
 
 app = Flask(__name__)
+
+# Configure rate limiting
+limiter = Limiter(
+    app,
+    key_func=get_remote_address,
+    default_limits=["1000 per hour", "100 per minute"]
+)
 
 # Register API blueprints
 app.register_blueprint(files_api)

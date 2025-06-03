@@ -10,6 +10,9 @@ import os
 import hashlib
 from pathlib import Path
 import time
+import threading
+from queue import Queue, Empty
+from contextlib import contextmanager
 
 # Configuration
 DATABASE_PATH = "/Volumes/ArcData/V3_database/arc_detection.db"
@@ -41,57 +44,104 @@ ARC_AUGMENTATION_SCHEMES = {
     'other': ['unknown']
 }
 
+class DatabaseConnectionPool:
+    """Thread-safe SQLite connection pool for better performance"""
+    
+    def __init__(self, db_path, pool_size=10, timeout=30):
+        self.db_path = db_path
+        self.pool_size = pool_size
+        self.timeout = timeout
+        self.pool = Queue(maxsize=pool_size)
+        self.lock = threading.Lock()
+        self._initialize_pool()
+    
+    def _initialize_pool(self):
+        """Initialize the connection pool"""
+        for _ in range(self.pool_size):
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row  # Enable dict-like access
+            self.pool.put(conn)
+    
+    @contextmanager
+    def get_connection(self):
+        """Get a connection from the pool"""
+        conn = None
+        try:
+            conn = self.pool.get(timeout=self.timeout)
+            yield conn
+        except Empty:
+            raise Exception("Database connection pool exhausted")
+        finally:
+            if conn:
+                self.pool.put(conn)
+    
+    def close_all(self):
+        """Close all connections in the pool"""
+        while not self.pool.empty():
+            try:
+                conn = self.pool.get_nowait()
+                conn.close()
+            except Empty:
+                break
+
+# Global connection pool instance
+_connection_pool = None
+
+def get_connection_pool():
+    """Get or create the global connection pool"""
+    global _connection_pool
+    if _connection_pool is None:
+        _connection_pool = DatabaseConnectionPool(DATABASE_PATH)
+    return _connection_pool
+
 class V3Database:
     """Database interface for V3 arc detection system"""
     
     def __init__(self, db_path=DATABASE_PATH):
         self.db_path = db_path
         self.binary_dir = BINARY_DATA_DIR
+        self.pool = get_connection_pool()
     
     def get_connection(self):
-        """Get database connection"""
-        return sqlite3.connect(self.db_path)
+        """Get database connection from pool"""
+        return self.pool.get_connection()
     
     def get_all_files(self, label_filter=None):
         """Get all files, optionally filtered by label"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        if label_filter:
-            cursor.execute('''
-                SELECT file_id, original_filename, original_path, selected_label,
-                       transient1_index, transient2_index, transient3_index,
-                       voltage_level, current_level, binary_data_path
-                FROM files WHERE selected_label = ? ORDER BY file_id
-            ''', (label_filter,))
-        else:
-            cursor.execute('''
-                SELECT file_id, original_filename, original_path, selected_label,
-                       transient1_index, transient2_index, transient3_index,
-                       voltage_level, current_level, binary_data_path
-                FROM files ORDER BY file_id
-            ''')
-        
-        files = cursor.fetchall()
-        conn.close()
-        return files
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            if label_filter:
+                cursor.execute('''
+                    SELECT file_id, original_filename, original_path, selected_label,
+                           transient1_index, transient2_index, transient3_index,
+                           voltage_level, current_level, binary_data_path
+                    FROM files WHERE selected_label = ? ORDER BY file_id
+                ''', (label_filter,))
+            else:
+                cursor.execute('''
+                    SELECT file_id, original_filename, original_path, selected_label,
+                           transient1_index, transient2_index, transient3_index,
+                           voltage_level, current_level, binary_data_path
+                    FROM files ORDER BY file_id
+                ''')
+            
+            return cursor.fetchall()
     
     def get_file_by_id(self, file_id):
         """Get file information by file_id"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT file_id, original_filename, original_path, selected_label,
-                   transient1_index, transient2_index, transient3_index,
-                   voltage_level, current_level, binary_data_path,
-                   total_samples, sampling_rate
-            FROM files WHERE file_id = ?
-        ''', (file_id,))
-        
-        result = cursor.fetchone()
-        conn.close()
-        return result
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT file_id, original_filename, original_path, selected_label,
+                       transient1_index, transient2_index, transient3_index,
+                       voltage_level, current_level, binary_data_path,
+                       total_samples, sampling_rate
+                FROM files WHERE file_id = ?
+            ''', (file_id,))
+            
+            return cursor.fetchone()
     
     def load_file_data(self, file_id):
         """Load load voltage and source current data for a file"""
@@ -118,17 +168,16 @@ class V3Database:
     
     def update_file_label(self, file_id, new_label):
         """Update file label"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            UPDATE files SET selected_label = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE file_id = ?
-        ''', (new_label, file_id))
-        
-        conn.commit()
-        conn.close()
-        print(f"Updated file {file_id} label to: {new_label}")
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                UPDATE files SET selected_label = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE file_id = ?
+            ''', (new_label, file_id))
+            
+            conn.commit()
+            print(f"Updated file {file_id} label to: {new_label}")
     
     def update_transient_indices(self, file_id, transient1=None, transient2=None, transient3=None):
         """Update transient indices for a file"""
